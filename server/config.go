@@ -6,6 +6,7 @@ import (
 	"io/ioutil"
 	"log"
 	"path/filepath"
+	"strings"
 )
 
 type LConfig struct {
@@ -78,6 +79,9 @@ func (c *LConfig) update() error {
 			continue
 		}
 		dir.FPath = path
+		if !strings.HasSuffix(dir.Url, "/") {
+			dir.Url += "/"
+		}
 	}
 	// TODO: make the update thread safe!
 	c.Data = &config

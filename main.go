@@ -4,11 +4,15 @@ import (
 	//"fmt"
 	"github.com/gophergala/ket/server"
 	//"html"
-	//"log"
+	"log"
 	//"net/http"
 )
 
 func main() {
-	srv := &server.Server{}
+	config, err := server.LiveConfig("./config.json")
+	if err != nil {
+		log.Fatal(err)
+	}
+	srv := &server.Server{Config: config}
 	srv.Start(":8080")
 }
