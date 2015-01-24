@@ -1,6 +1,7 @@
 package server
 
 import (
+	"crypto/tls"
 	"fmt"
 	"html"
 	"io"
@@ -13,7 +14,9 @@ import (
 
 type Server struct {
 	Config *LConfig
+	CA     *CertAuthority
 	pac    string
+	//CertFile, KeyFile string
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -28,20 +31,39 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.proxy(w, r)
 }
 
-func (s *Server) Start(port string) {
+func (s *Server) Init() error {
 	pac, err := ioutil.ReadFile("./data/proxy.pac")
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	s.pac = string(pac)
+	return nil
+}
+
+func (s *Server) Start(port string) error {
 	log.Printf("|ket%s〉\n", port)
-	log.Fatal(http.ListenAndServe(port, s))
+	server := &http.Server{
+		Addr: port, Handler: s,
+	}
+	return server.ListenAndServe()
+}
+
+func (s *Server) StartTLS(port, certFile, keyFile string) error {
+	log.Printf("|ket%s〉\n", port)
+	server := &http.Server{
+		Addr: port, Handler: s,
+		/*TLSConfig: &tls.Config{
+			GetCertificate:     s.CA.Get,
+			InsecureSkipVerify: true,
+		},*/
+	}
+	return server.ListenAndServeTLS(s.CA.CertFile, s.CA.KeyFile)
 }
 
 //------------------------------------------------------------------------------
 
 func isInternalHost(host string) bool {
-	return host == "" || host == "ket"
+	return host == "" || host == "ket" || host == "ket:443"
 }
 
 func (s *Server) handleInternal(w http.ResponseWriter, r *http.Request) bool {
@@ -91,13 +113,30 @@ func (s *Server) isBlocked(url *url.URL) bool {
 
 func (s *Server) proxy(w http.ResponseWriter, r *http.Request) {
 	log.Printf("%v\n", r.URL)
+
 	// Based on: https://golang.org/src/net/http/httputil/reverseproxy.go
-	r.Proto = "HTTP/1.1"
-	r.ProtoMajor = 1
-	r.ProtoMinor = 1
-	r.Close = false
+	out := new(http.Request)
+	*out = *r
+
+	out.Proto = "HTTP/1.1"
+	out.ProtoMajor = 1
+	out.ProtoMinor = 1
+	out.Close = false
+
 	transport := http.DefaultTransport
-	res, err := transport.RoundTrip(r)
+	if r.TLS != nil {
+		transport = &http.Transport{
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: true,
+			},
+		}
+		out.URL.Scheme = "https"
+	} else {
+		transport = &http.Transport{}
+		out.URL.Scheme = "http"
+	}
+
+	res, err := transport.RoundTrip(out)
 	if err != nil {
 		log.Println("Proxy error:", err)
 		w.WriteHeader(http.StatusInternalServerError)
@@ -106,7 +145,10 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request) {
 	defer res.Body.Close()
 	copyHeader(w.Header(), res.Header)
 	w.WriteHeader(res.StatusCode)
-	io.Copy(w, res.Body)
+	_, err = io.Copy(w, res.Body)
+	if err != nil {
+		log.Println("io.Copy:", err)
+	}
 }
 
 func copyHeader(dst, src http.Header) {
