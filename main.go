@@ -2,7 +2,7 @@ package main
 
 import (
 	"crypto/tls"
-	"github.com/gophergala/ket/server"
+	"github.com/uh-uh/ket/server"
 	"log"
 )
 
