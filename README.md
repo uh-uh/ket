@@ -1,8 +1,6 @@
-# |ket〉
+# ❘ket⟩
 
-`ket` is a |ket〉!!1
-Also, `ket` is a personal local http proxy that can:
-* Serve files from local file system
+`ket` is a |ket〉.
 
 ## Setting
 

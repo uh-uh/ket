@@ -16,10 +16,10 @@ type Server struct {
 	Config *LConfig
 	CA     *CertAuthority
 	pac    string
-	//CertFile, KeyFile string
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	log.Println(r.URL, r.RemoteAddr, r.Method, r.Proto)
 	if s.handleInternal(w, r) {
 		return
 	}
@@ -40,35 +40,57 @@ func (s *Server) Init() error {
 	return nil
 }
 
-func (s *Server) Start(port string) error {
+func (s *Server) Start(port string, config *tls.Config) error {
 	log.Printf("|ket%s〉\n", port)
-	server := &http.Server{
+	srv := &http.Server{
 		Addr: port, Handler: s,
 	}
-	return server.ListenAndServe()
+	ln, err := NewListener("tcp", srv.Addr, config)
+	if err != nil {
+		return err
+	}
+	return srv.Serve(ln)
 }
 
-func (s *Server) StartTLS(port, certFile, keyFile string) error {
+/*
+		func(w http.ResponseWriter, r *http.Request) {
+		if r.TLS == nil {
+			u := url.URL{
+				Scheme:   "https",
+				Opaque:   r.URL.Opaque,
+				User:     r.URL.User,
+				Host:     addr,
+				Path:     r.URL.Path,
+				RawQuery: r.URL.RawQuery,
+				Fragment: r.URL.Fragment,
+			}
+			http.Redirect(w, r, u.String(), http.StatusMovedPermanently)
+		} else {
+			http.DefaultServeMux.ServeHTTP(w, r)
+		}
+	}
+*/
+func (s *Server) StartTLS(port string) error {
 	log.Printf("|ket%s〉\n", port)
-	server := &http.Server{
+	srv := &http.Server{
 		Addr: port, Handler: s,
 		/*TLSConfig: &tls.Config{
 			GetCertificate:     s.CA.Get,
 			InsecureSkipVerify: true,
 		},*/
 	}
-	return server.ListenAndServeTLS(s.CA.CertFile, s.CA.KeyFile)
+	return srv.ListenAndServeTLS(s.CA.CertFile, s.CA.KeyFile)
 }
 
 //------------------------------------------------------------------------------
 
 func isInternalHost(host string) bool {
-	return host == "" || host == "ket" || host == "ket:443"
+	return host == "" || host == "localhost" || host == "ket"
 }
 
 func (s *Server) handleInternal(w http.ResponseWriter, r *http.Request) bool {
 	url := r.URL
-	if !isInternalHost(url.Host) {
+	if !isInternalHost(strings.SplitN(url.Host, ":", 2)[0]) {
 		return false
 	}
 	if url.Path == "/proxy.pac" {
@@ -112,8 +134,6 @@ func (s *Server) isBlocked(url *url.URL) bool {
 }
 
 func (s *Server) proxy(w http.ResponseWriter, r *http.Request) {
-	log.Printf("%v\n", r.URL)
-
 	// Based on: https://golang.org/src/net/http/httputil/reverseproxy.go
 	out := new(http.Request)
 	*out = *r
@@ -124,27 +144,30 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request) {
 	out.Close = false
 
 	transport := http.DefaultTransport
-	if r.TLS != nil {
-		transport = &http.Transport{
-			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: true,
-			},
-		}
-		out.URL.Scheme = "https"
-	} else {
-		transport = &http.Transport{}
+	if out.URL.Scheme == "" {
 		out.URL.Scheme = "http"
+		if strings.HasSuffix(out.URL.Host, ":443") {
+			out.URL.Scheme = "https"
+			transport = &http.Transport{
+				TLSClientConfig: &tls.Config{
+					InsecureSkipVerify: true,
+				},
+			}
+		}
 	}
-
 	res, err := transport.RoundTrip(out)
 	if err != nil {
 		log.Println("Proxy error:", err)
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-	defer res.Body.Close()
+	if out.Method == "CONNECT" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
 	copyHeader(w.Header(), res.Header)
 	w.WriteHeader(res.StatusCode)
+	defer res.Body.Close()
 	_, err = io.Copy(w, res.Body)
 	if err != nil {
 		log.Println("io.Copy:", err)

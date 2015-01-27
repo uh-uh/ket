@@ -1,14 +1,14 @@
 package main
 
 import (
+	"crypto/tls"
 	"github.com/gophergala/ket/server"
 	"log"
-	"path/filepath"
 )
 
 func main() {
 	log.SetFlags(log.Flags() | log.Llongfile)
-	config, err := server.LiveConfig("./config.json")
+	srvConfig, err := server.LiveConfig("./config.json")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -22,8 +22,16 @@ func main() {
 	//	log.Fatal(err)
 	//}
 	srv := &server.Server{
-		Config: config,
+		Config: srvConfig,
 		//CA:     ca,
+	}
+	cert, err := tls.LoadX509KeyPair("./data/cert.pem", "./data/key.pem")
+	if err != nil {
+		log.Fatal(err)
+	}
+	config := &tls.Config{
+		Certificates: []tls.Certificate{cert},
+		NextProtos:   []string{"http/1.1"},
 	}
 	err = srv.Init()
 	if err != nil {
@@ -31,7 +39,7 @@ func main() {
 	}
 	errors := make(chan error)
 	go func() {
-		errors <- srv.Start(":4891")
+		errors <- srv.Start(":4891", config)
 	}()
 	//go func() {
 	//	errors <- srv.StartTLS(":4819", certFile, keyFile)
